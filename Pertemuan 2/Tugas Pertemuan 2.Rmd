@@ -1,1 +1,301 @@
+---
+output: 
+  html_document:
+    css: "D:\\Nada\\Nada Kuliah\\Rancob\\Rancob\\sidebarcolor.css"
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    highlight: tango
+---
+
+```{r,echo=FALSE, results='asis'}
+cat('
+<div style="position: fixed; bottom: 10px; left: 50px; color: #1C2A1A; font-weight: bold;">
+  Nada Ardelia <br>
+  G1402131011 <br>
+</div>
+')
+```
+
+# Packages
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+install.packages("rio")
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(forecast)
+library(graphics)
+library(TTR)
+library(TSA)
+library(rio)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tseries)
+```
+
+# Data
+
+```{r}
+data <- read.csv("C:\\Users\\ailed\\Downloads\\Telur Ayam Ras.csv")
+data
+```
+
+```{r}
+data_subset <- data[160:319, ]
+data_subset
+```
+
+```{r}
+data_subset$Date <- as.Date(data_subset$Date) # buat ubah format date
+```
+
+```{r}
+str(data_subset)
+```
+
+```{r}
+# jumlah baris data
+n <- nrow(data_subset)
+
+# hitung batas 80%
+n_train <- floor(0.8 * n)
+
+# bagi data
+training <- data_subset[1:n_train, ]
+testing  <- data_subset[(n_train+1):n, ]
+
+# ubah ke time series
+train.ts <- ts(training$Jawa.Barat)
+test.ts  <- ts(testing$Jawa.Barat)
+```
+
+
+```{r}
+ts_data <- ts(data_subset$Jawa.Barat, freq=1) # kalo freq 1 dianggep pure daily ga ada seasonality
+```
+
+# Eksplorasi Data
+
+```{r}
+summary(ts_data)
+```
+## Plot Data
+
+```{r}
+plot(ts_data, 
+     main = "Time Series Harga Telur Harian", 
+     xlab = "Hari ke-", 
+     ylab = "Harga Telur (Rupiah)",
+     type = "l", 
+     col = "steelblue", 
+     lwd = 1.5)
+points(ts_data, pch = 19, cex = 0.4, col = "darkblue")
+```
+
+## Plot Data Train
+
+```{r}
+plot(train.ts, col="red",main="Plot data latih")
+points(train.ts)
+```
+
+## Plot Data Test
+
+```{r}
+plot(test.ts, col="blue",main="Plot data uji")
+points(test.ts)
+```
+
+```{r}
+ggplot() + 
+  geom_line(data = training, aes(x = Date, y = Jawa.Barat, col = "Data Latih")) +
+  geom_line(data = testing, aes(x = Date, y = Jawa.Barat, col = "Data Uji")) +
+  labs(x = "Periode Waktu", y = "Harga Telur", color = "Legend") +
+  scale_colour_manual(name="Keterangan:", breaks = c("Data Latih", "Data Uji"),
+                      values = c("blue", "red")) + 
+  theme_bw() + theme(legend.position = "bottom",
+                     plot.caption = element_text(hjust=0.5, size=12))
+```
+
+
+## Cek Seasonal
+
+```{r}
+if(length(ts_data) >= 14) {
+  # Create day of week indicator
+  days_of_week <- rep(1:7, length.out = length(ts_data))
+  day_names <- c("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min")
+  
+  # Boxplot per hari dalam seminggu
+  par(mar = c(6, 4, 4, 2))
+  boxplot(as.numeric(ts_data) ~ days_of_week, 
+          main = "Distribusi Harga per Hari dalam Seminggu",
+          xlab = "Hari dalam Seminggu", 
+          ylab = "Harga Telur",
+          names = day_names,
+          col = rainbow(7))
+  
+  # ANOVA test untuk seasonality
+  seasonal_test <- aov(as.numeric(ts_data) ~ as.factor(days_of_week))
+  seasonal_pvalue <- summary(seasonal_test)[[1]][1, "Pr(>F)"]
+  
+  cat("\n=== SEASONAL ANALYSIS ===\n")
+  cat("ANOVA p-value untuk efek hari:", round(seasonal_pvalue, 4), "\n")
+  if(seasonal_pvalue < 0.05) {
+    cat("Ada pola seasonal mingguan yang signifikan!\n")
+    use_seasonal <- TRUE
+  } else {
+    cat("Tidak ada pola seasonal yang signifikan\n")
+    use_seasonal <- FALSE
+  }
+} else {
+  cat("Data terlalu pendek untuk analisis seasonal\n")
+  use_seasonal <- FALSE
+}
+
+```
+
+
+Pada grafik terlihat ada tren naik dan turun yang jelas dan berdasarkan hasil ANOVA tidak ada pola seasonal mingguan yang signifikan sehingga harga telur tidak berbeda signifikan antara Senin-Minggu. Dari boxplot juga terlihat distribusinya relatif sama di semua hari. Hal ini menunjukkan bahwa metode *Holt-Winter's tidak diperlukan karena tidak ada seasonality sehingga cukup menggunaka Double Exponential Smoothing (DES).*
+
+
+# Double Exponential Smoothing (DES)
+
+## Lambda dan beta optimum
+
+```{r}
+des.opt<- HoltWinters(train.ts, gamma = FALSE)
+des.opt
+```
+```{r}
+plot(des.opt)
+```
+
+
+```{r}
+cat("Panjang forecast:", length(ramalandesopt$mean), "\n")
+cat("Panjang testing:", length(test.ts), "\n")
+```
+Panjang harus sama
+
+```{r}
+#ramalan
+ramalandesopt<- forecast(des.opt, h=32)
+ramalandesopt
+```
+
+
+### Akurasi Data Latih
+
+```{r}
+#Akurasi Data Training
+ssedes.train<-des.opt$SSE
+msedes.train<-ssedes.train/length(train.ts)
+sisaandes<-ramalandesopt$residuals
+head(sisaandes)
+```
+```{r}
+mapedes.train <- sum(abs(sisaandes[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.opt <- matrix(c(ssedes.train,msedes.train,mapedes.train))
+row.names(akurasides.opt)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.opt) <- c("Akurasi Optimum")
+
+akurasides.opt
+```
+
+
+### Akurasi Data Uji
+
+```{r}
+#Akurasi Data Testing
+
+selisihdes <- ramalandesopt$mean - testing$Jawa.Barat
+selisihdes
+```
+```{r}
+SSEtestingdes<-sum(selisihdes^2)
+MSEtestingdes<-SSEtestingdes/length(testing$Jawa.Barat)
+MAPEtestingdes<-sum(abs(selisihdes/testing$Jawa.Barat)*100)/length(testing$Jawa.Barat)
+```
+
+```{r}
+akurasitestingdes <-
+  matrix(c(SSEtestingdes,MSEtestingdes,MAPEtestingdes),
+         nrow=3,ncol=1)
+row.names(akurasitestingdes)<- c("SSE", "MSE", "MAPE")
+colnames(akurasitestingdes) <- c("des")
+akurasitestingdes
+```
+## Lambda 0,6 dan beta 0,3
+
+```{r}
+des.2<- HoltWinters(train.ts, gamma = FALSE, beta = 0.3, alpha = 0.6)
+plot(des.2)
+```
+
+```{r}
+ramalandes2<- forecast(des.2, h=32)
+ramalandes2
+```
+
+```{r}
+plot(ts_data)
+lines(des.2$fitted[,1], lty=2, col="blue")
+lines(ramalandes2$mean, col="red")
+```
+
+### Akurasi Data Latih
+
+```{r}
+ssedes.train2<-des.2$SSE
+msedes.train2<-ssedes.train2/length(train.ts)
+sisaandes2<-ramalandes2$residuals
+head(sisaandes2)
+```
+
+
+```{r}
+mapedes.train2 <- sum(abs(sisaandes2[3:length(train.ts)]/train.ts[3:length(train.ts)])
+                      *100)/length(train.ts)
+
+akurasides.2 <- matrix(c(ssedes.train2,msedes.train2,mapedes.train2))
+row.names(akurasides.2)<- c("SSE", "MSE", "MAPE")
+colnames(akurasides.2) <- c("Akurasi lamda=0.6 dan gamma=0.3")
+akurasides.2
+```
+
+### Akurasi Data Uji
+
+```{r}
+selisihdes2<-ramalandes2$mean-testing$Jawa.Barat
+selisihdes2
+```
+
+```{r}
+SSEtestingdes2<-sum(selisihdes2^2)
+MSEtestingdes2<-SSEtestingdes2/length(testing$Jawa.Barat)
+MAPEtestingdes2<-sum(abs(selisihdes2/testing$Jawa.Barat)*100)/length(testing$Jawa.Barat)
+```
+
+```{r}
+akurasitestingdes <-
+  matrix(c(SSEtestingdes2,MSEtestingdes2,
+           MAPEtestingdes2,SSEtestingdes,MSEtestingdes,MAPEtestingdes),
+         nrow=3,ncol=2)
+row.names(akurasitestingdes)<- c("SSE", "MSE", "MAPE")
+colnames(akurasitestingdes) <- c("des ske2","des opt")
+akurasitestingdes
+```
+
+Pada alpha dan beta optimum, *Training MAPE = 0,53%*  dan *Testing MAPE 6,05%* ada gap sedikit yang menunjukkan model agak overfitting, tetapi skor MAPE < 10% sehingga model sudah cukup bagus.
+
+Pada alpha = 0,6 dan beta = 0,3, *Training MAPE = 0,53%* dan *Testing MAPE 5,91%* ada gap sedikit tetapi masih lebih baik dari pada yang menggunakan alpha dan beta optimum. SSE dan MSE pada alpha dan beta non optimum (yang di adjudt sendiri) lebih kecil dari model yang optimum.
+
+Metode yang paling cocok untuk data_subset (160-319) harga telur ras di Jawa Barat adalah $Double Exponential Smooting (DES)$ dengan *alpha = 0,6 dan beta = 0,3.*
 
