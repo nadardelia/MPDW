@@ -1,0 +1,281 @@
+
+---
+output: 
+  html_document:
+    css: "D:\\Nada\\Nada Kuliah\\Rancob\\Rancob\\sidebarcolor.css"
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    highlight: tango
+---
+
+```{r,echo=FALSE, results='asis'}
+cat('
+<div style="position: fixed; bottom: 10px; left: 50px; color: #1C2A1A; font-weight: bold;">
+  Nada Ardelia <br>
+  G1401231011 <br>
+</div>
+')
+```
+
+# Library
+
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(lmtest)
+library(dplyr)
+library(TTR)
+library(forecast)
+```
+
+# Data
+
+Data yang digunakan adalah data IPB Nusa Tenggara Timur pada tahun 2010-2024.
+
+```{r}
+data1 <- read_excel("D:\\Nada\\Nada Kuliah\\MPDW\\IPM NTT.xlsx")
+data1
+```
+
+# Eksplorasi Data
+
+```{r}
+data.ts <- ts(data1$IPM)
+data.ts
+```
+## Scatter Plot
+
+```{r}
+plot(data1, pch = 20, col = "blue",
+     main = "Scatter Plot Tahun vs Nilai IPM",
+     xlab = "Tahun",
+     ylab = "Nilai IPM")
+```
+
+# Regresi
+
+```{r}
+model <- lm(IPM ~ Tahun, data = data1)
+summary(model)
+```
+Model yang dihasilkan adalah
+
+\[ \text{IPM}_i = -1024 + 0.5390 \times \text{Tahun} \]
+
+Berdasarkan ringkasan model dapat diketahui bahwa hasil uji F memiliki p-value = 5.38e-13 < α (5%). Artinya, minimal terdapat satu variabel yang berpengaruh nyata terhadap model. Hasil uji-t parsial untuk kedua parameter regresi menunjukkan bahwa baik intersep (p-value = 1.16e-12) maupun koefisien regresi Tahun (p-value = 5.38e-13) signifikan pada taraf α = 5%. 
+
+Selanjutnya dapat dilihat nilai R-squared = 0.9836. Artinya, sebesar 98.36% keragaman nilai IPM dapat dijelaskan oleh variabel Tahun. Hasil ini menunjukkan model memiliki kecocokan yang sangat baik dengan data. Namun, kita perlu melakukan uji asumsi klasik terhadap residualnya.
+
+# Uji Asumsi
+
+## 1. Uji Normalitas Residual
+
+```{r}
+# Ambil residual numeric
+residuals_numeric <- as.numeric(residuals(model))
+
+# Shapiro-Wilk test
+shapiro.test(residuals_numeric)
+
+# Visualisasi
+hist(residuals_numeric, main="Histogram Residual", xlab="Residual", col="lightblue")
+qqnorm(residuals_numeric)
+qqline(residuals_numeric, col="red")
+
+```
+
+p-value > 0,05 sehingga residual menyebar normal (asumsi terpenuhi).
+
+## 2. Uji Heteroskedastisitas
+
+```{r}
+bptest(model)
+```
+
+p-value > 0,05 sehingga asumsi homoskedastisitas terpenuhi.
+
+## 3. Autokorelasi
+
+*Durbin-Watson Test*
+
+```{r}
+dw_result <- dwtest(model)
+dw_result
+```
+Nilai DW < 2 yang menunjukkan adanya autokorelasi positif.
+
+*ACF (Autocorrelation Function)*
+
+```{r}
+acf(residuals_numeric, main="ACF Residuals")
+```
+
+*PACF (Partial Autocorrelation Function)*
+
+```{r}
+pacf(residuals_numeric, main="PACF Residuals")
+```
+
+Berdasarkan kedua grafik, ACF menunjukkan autokorelasi signifikan pada lag 1, sementara PACF memiliki spike signifikan pada lag 1 dan 2 yang artinya data masih saling berhubungan (korelasi). Oleh karena itu, diperlukan penanganan autokorelasi. Penanganan ini akan menggunakan dua metode, yaitu Cochrane-Orcutt dan Hildret-Lu.
+
+
+# Penanganan Autokorelasi
+
+## Metode Cochrane-Orcutt
+
+### Library
+
+```{r}
+install.packages("https://cran.r-project.org/src/contrib/Archive/orcutt/orcutt_2.0.tar.gz", repos = NULL, type = "source")
+```
+
+```{r}
+library(orcutt)
+```
+
+
+### Model
+
+```{r}
+modelCO <- cochrane.orcutt(model)
+modelCO
+```
+
+```{r}
+#Rho optimum
+rho<- modelCO$rho
+rho
+```
+
+Hasil yang dikeluarkan model setelah dilakukan penanganan adalah sebagai berikut.
+
+\[ \text{Y}_i = -1109.4078 + 0.58156 \times \text{Tahun} \]
+
+Hasil juga menunjukkan bahwa nilai DW dan p-value meningkat menjadi 1.3342 dan 0.0467. Metode Cochrane-Orcutt berhasil mengurangi masalah autokorelasi. Meskipun DW transformed (1.33) masih belum ideal (idealnya mendekati 2), namun sudah jauh lebih baik dari kondisi awal (0.82).
+
+Selanjutnya akan dilakukan transformasi secara manual dengan sintaks berikut ini.
+
+```{r}
+data1$IPM
+```
+```{r}
+data1$IPM[-1]
+```
+
+```{r}
+# Transformasi Manual
+ipm.trans<- data1$IPM[-1]-data1$IPM[-15]*rho
+tahun.trans<- data1$Tahun[-1]-data1$Tahun[-15]*rho
+modelCOmanual<- lm(ipm.trans~tahun.trans)
+summary(modelCOmanual)
+```
+
+Hasil model transformasi bukan merupakan model sesungguhnya. Koefisien regresi masih perlu dicari kembali.
+
+```{r}
+#Mencari Penduga Koefisien Regresi setelah Transformasi ke Persamaan Awal
+b0bintang <- modelCOmanual$coefficients[-2]
+b0 <- b0bintang/(1-rho)
+b1 <- modelCOmanual$coefficients[-1]
+b0
+b1
+```
+Hasil perhitungan koefisien regresi tersebut akan menghasilkan hasil yang sama dengan model yang dihasilkan menggunakan packages.
+
+
+## Metode Hildreth-Lu
+
+### Library
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+install.packages("HoRM", repos = "https://cran.studio.com/" )
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(HoRM)
+```
+
+### Model
+
+```{r}
+# Hildreth-Lu
+hildreth.lu.func<- function(r, model){
+  x <- model.matrix(model)[,-1]
+  y <- model.response(model.frame(model))
+  n <- length(y)
+  t <- 2:n
+  y <- y[t]-r*y[t-1]
+  x <- x[t]-r*x[t-1]
+  
+  return(lm(y~x))
+}
+```
+
+```{r}
+#Pencariab rho yang meminimumkan SSE
+r <- c(seq(0.1,0.9, by= 0.1))
+tab <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model))}))
+round(tab, 4)
+```
+
+Pada hasil di atas terlihat ρ minimum ketika 0.7. Namun, hasil tersebut masih kurang teliti sehingga akan dicari kembali ρ yang lebih optimum dengan ketelitian yang lebih. Jika sebelumnya jarak antar ρ yang dicari adalah 0.1, kali ini jarak antar ρ adalah 0.001 dan dilakukan pada selang 0.2 sampai dengan 0.5.
+
+```{r}
+#Rho optimal di sekitar 0.8
+rOpt <- seq(0.6,0.8, by= 0.001)
+tabOpt <- data.frame("rho" = rOpt, "SSE" = sapply(rOpt, function(i){deviance(hildreth.lu.func(i, model))}))
+head(tabOpt[order(tabOpt$SSE),])
+```
+
+```{r}
+#Grafik SSE optimum
+par(mfrow = c(1,1))
+plot(tab$SSE ~ tab$rho , type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = tabOpt[tabOpt$SSE==min(tabOpt$SSE),"rho"], lty = 2, col="red",lwd=2)
+text(x=0.698, y=0.9265112, labels = "rho=0.698", cex = 0.8)
+```
+
+Perhitungan yang dilakukan aplikasi R menunjukkan bahwa nilai ρ optimum, yaitu saat SSE terkecil terdapat pada nilai ρ=0.698. Hal tersebut juga ditunjukkan pada plot. Selanjutnya, model dapat didapatkan dengan mengevaluasi nilai ρ ke dalam fungsi hildreth.lu.func, serta dilanjutkan dengan pengujian autokorelasi dengan uji Durbin-Watson. Namun, setelah pengecekan tersebut tidak lupa koefisien regresi tersebut digunakan untuk transformasi balik. Persamaan hasil transformasi itulah yang menjadi persamaan sesungguhnya.
+
+
+```{r}
+#Model terbaik
+modelHL <- hildreth.lu.func(0.698, model)
+summary(modelHL)
+```
+```{r}
+#Transformasi Balik
+cat("y = ", coef(modelHL)[1]/(1-0.698), "+", coef(modelHL)[2],"x", sep = "")
+```
+
+Setelah dilakukan transformasi balik, didapatkan model dengan metode Hildreth-Lu sebagai berikut.
+
+```{r}
+#Deteksi autokorelasi
+dwtest(modelHL)
+```
+Hal tersebut menujukkan p-value sebesar 0.0467,di mana p-value < α =5%. Artinya tolak H0 atau cukup bukti untuk menyatakan bahwa ada autokorelasi dalam data nilai IPM dengan metode Hildreth-Lu pada taraf nyata 5%.
+
+Terakhir, akan dibandingkan nilai SSE dari ketiga metode (metode awal, metode Cochrane-Orcutt, dan Hildreth-Lu).
+
+
+```{r}
+#Perbandingan
+sseModelawal <- anova(model)$`Sum Sq`[-1]
+sseModelCO <- anova(modelCOmanual)$`Sum Sq`[-1]
+sseModelHL <- anova(modelHL)$`Sum Sq`[-1]
+mseModelawal <- sseModelawal/length(data1$IPM)
+mseModelCO <- sseModelCO/length(data1$IPM)
+mseModelHL <- sseModelHL/length(data1$IPM)
+akurasi <- matrix(c(sseModelawal,sseModelCO,sseModelHL,
+                    mseModelawal,mseModelCO,mseModelHL),nrow=2,ncol=3,byrow = T)
+colnames(akurasi) <- c("Model Awal", "Model Cochrane-Orcutt", "Model Hildreth-Lu")
+row.names(akurasi) <- c("SSE","MSE")
+akurasi
+```
+
+Berdasarkan hasil tersebut dapat diketahui bahwa hasil penanganan autokorelasi dengan metode Cochrane-Orcutt dan Hildreth-Lu memiliki SSE yang sama.
+
+
+Autokorelasi yang terdapat pada data IPM terjadi akibat adanya korelasi di antara unsur penyusunnya. Indikator IPM yang erat hubungannya dengan perekonomian sangat rawan menjadi penyebab adanya autokorelasi. Autokorelasi dapat dideteksi secara eksploratif melalui plot sisaan, ACF, dan PACF, serta dengan uji formal Durbin-Watson. Namun, autokorelasi pada data IPM NTT belum dapat ditangani dengan metode Cochrane-Orcutt dan Hildreth-Lu sehingga memerlukan penanganan lain.
