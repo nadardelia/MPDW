@@ -1,0 +1,269 @@
+---
+output: 
+  html_document:
+    css: "D:\\Nada\\Nada Kuliah\\Template CSS\\baru.css"
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    highlight: tango
+---
+
+```{r,echo=FALSE, results='asis'}
+cat('
+<div style="position: fixed; bottom: 10px; left: 50px; color: #1C2A1A; font-weight: bold;">
+  Nada Ardelia <br>
+  G1401231011 <br>
+</div>
+')
+```
+
+
+# Library
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(lattice)
+library(dplyr)
+```
+
+
+# Data
+
+```{r}
+data <- read.csv("C:\\Users\\ailed\\Downloads\\Telur Ayam Ras.csv")
+head(data)
+```
+
+```{r}
+data_subset <- data[160:319, ]
+head(data_subset)
+```
+
+```{r}
+data_subset$Date <- as.Date(data_subset$Date)
+```
+
+
+# Plot Time Series
+
+```{r}
+plot(data_subset$Date, data_subset$Jawa.Barat, type = "l",
+     xlab = "Tanggal", ylab = "Harga", main = "Time Series Harga di Jawa Barat")
+```
+
+```{r}
+mean(data_subset$Jawa.Barat, na.rm = TRUE)
+```
+
+```{r}
+densityplot(as.vector(data_subset$Jawa.Barat),
+            main = "Density Plot Harga Jawa Barat",
+            xlab = "Harga")
+```
+
+
+Plot Time Series dan Density Plot di atas menunjukkan bahwa data tidak stasioner terhadap rataan.
+
+
+# Plot ACF
+
+```{r}
+harga <- na.omit(data_subset$Jawa.Barat)
+acf(harga, main = "ACF - Harga Telur Jawa Barat")
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF pada data tersebut cenderung tails off.
+
+
+# Uji ADF
+
+$H_0$: Data tidak stasioner dalam rataan
+
+$H_1$: Data stasioner dalam rataan
+
+```{r}
+tseries::adf.test(harga)
+```
+Berdasarkan hasil uji ADF, p-value > 0,05 sehingga tolak H0 dan menandakan bahwa data *tidak stasioner dalam rataan*.  Hal ini sesuai dengan hasil eksplorasi menggunakan plot time series dan plot ACF.
+
+
+# Plot Box Cox
+
+```{r}
+index <- seq_along(harga)
+
+# Plot Box-Cox
+bc <- boxcox(harga ~ index, lambda = seq(-1, 4, by = 0.01))
+
+```
+
+
+```{r}
+# Nilai lambda maksimum (optimum)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+
+```{r}
+# Hitung selang kepercayaan 95%
+
+# CI lambda: nilai log-likelihood maksimum - chi-square
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+# Tampilkan hasil
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+
+```
+Gambar di atas menunjukkan nilai λ optimum (rounded value) sebesar -1 dan selang kepercayaan 95% nilai memiliki batas bawah -1 dan batas atas -0,35. Selang tersebut *tidak memuat nilai satu* sehingga dapat dikatakan bahwa data harga *tidak stasioner dalam ragam*.
+
+>Data tidak stasioner dalam rataan dan ragam sehingga perlu penanganan lebih lanjut. Penanganan pertama adalah stasionerkan ragam terlebih dahulu dengan transformasi Box-Cox, lalu differencing. 
+
+>Jika step diawalin dengan diff dulu, bisa menyebabkan data jadi negatif sehingga ga bisa pakai transformasi Box-Cox.
+
+# Transformasi Box-Cox
+
+```{r}
+model_bc <- lm(harga ~ 1)
+```
+
+```{r}
+bc <- boxcox(model_bc, lambda = seq(-2, 4, by = 0.01))
+```
+
+```{r}
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+```
+
+```{r}
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+```
+
+```{r}
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+Setelah transformasi Box-Cox nilai 1 tetap tidak dalam rentang.
+
+# Differencing 1
+
+```{r}
+diff1 <- diff(harga, differences = 1)
+plot.ts(diff1, main = "First-order Differencing", col = "blue", lwd = 2)
+```
+
+
+## Uji ADF
+
+```{r}
+adf.test(diff1)
+```
+
+p-value > 0,05 sehingga masih tidak stasioner, maka akan coba differencing ke 2 kali.
+
+# Differencing 2
+
+```{r}
+diff2 <- diff(harga, differences = 2)
+plot.ts(diff2, main = "Second-order Differencing", col = "red", lwd = 2)
+```
+
+## Uji ADF
+
+```{r}
+adf.test(diff2)
+```
+## Plot ACF
+
+```{r}
+acf(diff2, main = "ACF setelah Differencing 2")
+```
+
+
+Data sudah stasioner terhadap rataan, namun masih non stasioner terhadap ragam.
+
+
+# Partisi Data
+
+## Bagian 1
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+# Ambil 100 observasi pertama dari diff2
+diff2_part1 <- diff2[1:100] |> ts()
+
+# Hitung nilai mean dan variansi
+mean(diff2_part1)
+var(diff2_part1)
+
+# Buat plot seperti contoh
+diff2_part1 |>
+  as_tsibble() |>
+  ggplot(aes(x = index, y = value)) +
+  geom_line() +
+  theme_bw() +
+  xlab("Obs") + ylab("Nilai")
+```
+
+
+## Plot ACF
+
+```{r}
+acf(diff2_part1)
+```
+
+```{r}
+adf.test(diff2_part1)
+```
+
+p-value < 0,05 sehingga data bagian 1 stasioner dalam rataan.
+
+
+## Bagian 2
+
+```{r}
+# Ambil 100 observasi pertama dari diff2
+diff2_part2 <- diff2[101:150] |> ts()
+
+# Hitung nilai mean dan variansi
+mean(diff2_part2)
+var(diff2_part2)
+
+# Buat plot seperti contoh
+diff2_part2 |>
+  as_tsibble() |>
+  ggplot(aes(x = index, y = value)) +
+  geom_line() +
+  theme_bw() +
+  xlab("Obs") + ylab("Nilai")
+```
+
+## Plot ACF
+
+```{r}
+acf(diff2_part2)
+```
+
+```{r}
+adf.test(diff2_part2)
+```
+p-value < 0,05 sehingga data bagian 2 stasioner dalam rataan.
+
+>Sebelumnya, data masih gagal untuk transformasi Box-Cox yang menyebabkan nilai 1 tidak ada dalam rentang selang sehingga perlu penanganan lebih lanjut.
