@@ -1,0 +1,435 @@
+---
+output: 
+  html_document:
+    css: "D:\\Nada\\Nada Kuliah\\Template CSS\\baru.css"
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    highlight: tango
+---
+
+```{r,echo=FALSE, results='asis'}
+cat('
+<div style="position: fixed; bottom: 10px; left: 50px; color: #1C2A1A; font-weight: bold;">
+  Nada Ardelia <br>
+  G1401231011 <br>
+</div>
+')
+```
+
+
+# Library
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(lattice)
+library(dplyr)
+```
+
+
+# Data
+
+```{r}
+data <- read.csv("C:\\Users\\ailed\\Downloads\\Telur Ayam Ras.csv")
+head(data)
+```
+
+```{r}
+data_subset <- data[160:319, ]
+head(data_subset)
+```
+
+```{r}
+data_subset$Date <- as.Date(data_subset$Date)
+```
+
+
+# Plot Time Series
+
+```{r}
+plot(data_subset$Date, data_subset$Jawa.Barat, type = "l",
+     xlab = "Tanggal", ylab = "Harga", main = "Time Series Harga di Jawa Barat")
+```
+
+```{r}
+mean(data_subset$Jawa.Barat, na.rm = TRUE)
+```
+
+```{r}
+densityplot(as.vector(data_subset$Jawa.Barat),
+            main = "Density Plot Harga Jawa Barat",
+            xlab = "Harga")
+```
+
+
+Plot Time Series dan Density Plot di atas menunjukkan bahwa data tidak stasioner terhadap rataan.
+
+
+# Plot ACF
+
+```{r}
+harga <- na.omit(data_subset$Jawa.Barat)
+acf(harga, main = "ACF - Harga Telur Jawa Barat")
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF pada data tersebut cenderung tails off.
+
+
+# Uji ADF
+
+$H_0$: Data tidak stasioner dalam rataan
+
+$H_1$: Data stasioner dalam rataan
+
+```{r}
+tseries::adf.test(harga)
+```
+Berdasarkan hasil uji ADF, p-value > 0,05 sehingga tolak H0 dan menandakan bahwa data *tidak stasioner dalam rataan*.  Hal ini sesuai dengan hasil eksplorasi menggunakan plot time series dan plot ACF.
+
+
+# Plot Box Cox
+
+```{r}
+index <- seq_along(harga)
+
+# Plot Box-Cox
+bc <- boxcox(harga ~ index, lambda = seq(-1, 4, by = 0.01))
+
+```
+
+
+```{r}
+# Nilai lambda maksimum (optimum)
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+
+```{r}
+# Hitung selang kepercayaan 95%
+
+# CI lambda: nilai log-likelihood maksimum - chi-square
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+# Tampilkan hasil
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+
+```
+Gambar di atas menunjukkan nilai λ optimum (rounded value) sebesar -1 dan selang kepercayaan 95% nilai memiliki batas bawah -1 dan batas atas -0,35. Selang tersebut *tidak memuat nilai satu* sehingga dapat dikatakan bahwa data harga *tidak stasioner dalam ragam*.
+
+>Data tidak stasioner dalam rataan dan ragam sehingga perlu penanganan lebih lanjut. Penanganan pertama adalah stasionerkan ragam terlebih dahulu dengan transformasi Box-Cox, lalu differencing. 
+
+>Jika step diawalin dengan diff dulu, bisa menyebabkan data jadi negatif sehingga ga bisa pakai transformasi Box-Cox.
+
+# Transformasi Box-Cox
+
+```{r}
+model_bc <- lm(harga ~ 1)
+```
+
+```{r}
+bc <- boxcox(model_bc, lambda = seq(-2, 4, by = 0.01))
+```
+
+```{r}
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+```
+
+```{r}
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, 1)]
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+```
+
+```{r}
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+Setelah transformasi Box-Cox nilai 1 tetap tidak dalam rentang.
+
+# Differencing 1
+
+```{r}
+diff1 <- diff(harga, differences = 1)
+plot.ts(diff1, main = "First-order Differencing", col = "blue", lwd = 2)
+```
+
+
+## Uji ADF
+
+```{r}
+adf.test(diff1)
+```
+
+p-value > 0,05 sehingga masih tidak stasioner, maka akan coba differencing ke 2 kali.
+
+# Differencing 2
+
+```{r}
+diff2 <- diff(harga, differences = 2)
+plot.ts(diff2, main = "Second-order Differencing", col = "red", lwd = 2)
+```
+
+## Uji ADF
+
+```{r}
+adf.test(diff2)
+```
+## Plot ACF
+
+```{r}
+acf(diff2, main = "ACF setelah Differencing 2")
+```
+
+
+Data sudah stasioner terhadap rataan, namun masih non stasioner terhadap ragam.
+
+
+# Partisi Data
+
+```{r}
+n <- nrow(data_subset)
+train_size <- floor(0.8 * n)
+
+# Bagi data
+train_data <- data_subset[1:train_size, ]
+test_data  <- data_subset[(train_size+1):n, ]
+
+# Cek jumlah baris
+nrow(train_data)
+nrow(test_data)
+```
+## Data Train
+
+```{r}
+train_data$Date <- as.Date(train_data$Date)
+```
+
+
+### Plot Time Series
+
+```{r}
+plot(train_data$Date, train_data$Jawa.Barat, type = "l",
+     xlab = "Tanggal", ylab = "Harga", main = "Time Series Harga di Jawa Barat")
+```
+
+```{r}
+mean(train_data$Jawa.Barat, na.rm = TRUE)
+```
+
+```{r}
+densityplot(as.vector(train_data$Jawa.Barat),
+            main = "Density Plot Harga Jawa Barat",
+            xlab = "Harga")
+```
+
+Plot Time Series dan Density Plot di atas menunjukkan bahwa data tidak stasioner terhadap rataan.
+
+### Plot ACF
+
+```{r}
+harga_train <- na.omit(train_data$Jawa.Barat)
+acf(harga_train, main = "ACF - Harga Telur Jawa Barat")
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF pada data tersebut cenderung tails off.
+
+
+### Uji ADF
+
+$H_0$: Data tidak stasioner dalam rataan
+
+$H_1$: Data stasioner dalam rataan
+
+```{r}
+tseries::adf.test(harga_train)
+```
+
+Berdasarkan hasil uji ADF, p-value > 0,05 sehingga tolak H0 dan menandakan bahwa data *tidak stasioner dalam rataan*.  Hal ini sesuai dengan hasil eksplorasi menggunakan plot time series dan plot ACF.
+
+
+### Plot Box Cox
+
+```{r}
+index <- seq_along(harga_train)
+
+# Plot Box-Cox
+bc_train <- boxcox(harga_train ~ index, lambda = seq(-2, 4, by = 0.01))
+
+```
+
+```{r}
+# Nilai lambda maksimum (optimum)
+lambda_train <- bc_train$x[which.max(bc_train$y)]
+lambda_train
+```
+
+
+```{r}
+# Hitung selang kepercayaan 95%
+
+# CI lambda: nilai log-likelihood maksimum - chi-square
+ci_lambda_train <- bc_train$x[bc_train$y > max(bc_train$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan atas
+ci_lower_train <- min(ci_lambda_train)
+ci_upper_train <- max(ci_lambda_train)
+
+# Tampilkan hasil
+c(Batas_Bawah = ci_lower_train, Batas_Atas = ci_upper_train)
+
+```
+Gambar di atas menunjukkan nilai λ optimum (rounded value) sebesar -2 dan selang kepercayaan 95% nilai memiliki batas bawah -2 dan batas atas -0,35. Selang tersebut *tidak memuat nilai satu* sehingga dapat dikatakan bahwa data harga *tidak stasioner dalam ragam*.
+
+### Transformasi Box-Cox
+
+```{r}
+model_bc_train <- lm(harga_train ~ 1)
+```
+
+```{r}
+bc_train2 <- boxcox(model_bc_train, lambda = seq(-2, 4, by = 0.01))
+```
+
+```{r}
+lambda_opt3 <- bc$x[which.max(bc$y)]
+lambda_opt3
+```
+
+```{r}
+ci_lambda3 <- bc_train2$x[bc_train2$y > max(bc_train2$y) - 0.5 * qchisq(0.95, 1)]
+ci_lower3 <- min(ci_lambda3)
+ci_upper3 <- max(ci_lambda3)
+```
+
+```{r}
+
+c(Batas_Bawah = ci_lower3, Batas_Atas = ci_upper3)
+```
+
+Gambar di atas menunjukkan nilai λ optimum (rounded value) sebesar -2 dan selang kepercayaan 95% nilai memiliki batas bawah -2 dan batas atas -0,35. Selang tersebut *tidak memuat nilai satu* sehingga dapat dikatakan bahwa data harga *tidak stasioner dalam ragam*.
+
+### Differencing 1
+
+```{r}
+diff11 <- diff(harga_train, differences = 1)
+plot.ts(diff11, main = "First-order Differencing", col = "blue", lwd = 2)
+```
+
+```{r}
+adf.test(diff11)
+```
+
+p-value > 0,05 sehingga masih tidak stasioner, maka akan coba differencing ke 2 kali.
+
+### Differencing 2
+
+```{r}
+diff22 <- diff(harga_train, differences = 2)
+plot.ts(diff22, main = "Second-order Differencing", col = "red", lwd = 2)
+```
+
+```{r}
+adf.test(diff22)
+```
+
+```{r}
+acf(diff22, main = "ACF setelah Differencing 2")
+```
+
+
+Data sudah stasioner terhadap rataan, namun masih non stasioner terhadap ragam.
+
+## Data Test
+
+```{r}
+test_data$Date <- as.Date(test_data$Date)
+```
+
+
+### Plot Time Series
+
+```{r}
+plot(test_data$Date, test_data$Jawa.Barat, type = "l",
+     xlab = "Tanggal", ylab = "Harga", main = "Time Series Harga di Jawa Barat")
+```
+
+```{r}
+mean(test_data$Jawa.Barat, na.rm = TRUE)
+```
+
+```{r}
+densityplot(as.vector(test_data$Jawa.Barat),
+            main = "Density Plot Harga Jawa Barat",
+            xlab = "Harga")
+```
+
+
+Plot Time Series dan Density Plot di atas menunjukkan bahwa data tidak stasioner terhadap rataan.
+
+### Plot ACF
+
+```{r}
+harga_test <- na.omit(test_data$Jawa.Barat)
+acf(harga_test, main = "ACF - Harga Telur Jawa Barat")
+```
+
+Berdasarkan plot ACF, terlihat bahwa plot ACF pada data tersebut cenderung tails off.
+
+
+### Uji ADF
+
+$H_0$: Data tidak stasioner dalam rataan
+
+$H_1$: Data stasioner dalam rataan
+
+```{r}
+tseries::adf.test(harga_test)
+```
+Berdasarkan hasil uji ADF, p-value > 0,05 sehingga tolak H0 dan menandakan bahwa data *tidak stasioner dalam rataan*.  Hal ini sesuai dengan hasil eksplorasi menggunakan plot time series dan plot ACF.
+
+### Plot Box Cox
+
+```{r}
+index <- seq_along(harga_test)
+
+# Plot Box-Cox
+bc_test <- boxcox(harga_test ~ index, lambda = seq(-2, 4, by = 0.01))
+
+```
+
+```{r}
+# Nilai lambda maksimum (optimum)
+lambda_test <- bc_test$x[which.max(bc_test$y)]
+lambda_test
+```
+
+
+```{r}
+# Hitung selang kepercayaan 95%
+
+# CI lambda: nilai log-likelihood maksimum - chi-square
+ci_lambda_test <- bc_test$x[bc_test$y > max(bc_test$y) - 0.5 * qchisq(0.95, 1)]
+
+# Batas bawah dan atas
+ci_lower_test <- min(ci_lambda_test)
+ci_upper_test <- max(ci_lambda_test)
+
+# Tampilkan hasil
+c(Batas_Bawah = ci_lower_test, Batas_Atas = ci_upper_test)
+
+```
+
+Gambar di atas menunjukkan nilai λ optimum (rounded value) sebesar -0,6 dan selang kepercayaan 95% nilai memiliki batas bawah -2 dan batas atas -4. Selang tersebut *memuat nilai satu* sehingga dapat dikatakan bahwa data harga test *stasioner dalam ragam*.
